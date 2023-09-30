@@ -28,7 +28,6 @@ def get_largest_id(tag: str) -> int:
         id_max = 0
     return id_max
 
-
 def download_image(tag: str, infos: dict, verbose: bool = True) -> None:
     if verbose: print("Reading image informations...", end=" ")
     try:
@@ -62,7 +61,6 @@ def download_image(tag: str, infos: dict, verbose: bool = True) -> None:
     with open(jsonpath, "w") as f:
         json.dump(infos, f, indent=4)
     if verbose: print("done!")
-
 
 def get_images_infos(base_url: str, tag: str, limit: int, skip_ids_below: int = 0) -> list[dict]:
     print("Requesting images infos...", end=" ")
@@ -105,10 +103,12 @@ if __name__ == "__main__":
     url_testbooru = "https://testbooru.donmai.us"
     base_url = url_danbooru if not parser.parse_args().test else url_testbooru
     
-    # Connect
+    # Connecting to the API
     
     login(parser.parse_args().username, parser.parse_args().api_key)
     
+    # Requesting the images
+
     tag = parser.parse_args().tag
     
     if not parser.parse_args().ignore_existing:
@@ -124,6 +124,8 @@ if __name__ == "__main__":
             base_url=base_url,
             limit=parser.parse_args().limit
         )
+
+    # Downloading the images
 
     for info in tqdm(infos):
         download_image(tag, info, verbose=False)
