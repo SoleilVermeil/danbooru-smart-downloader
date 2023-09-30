@@ -4,13 +4,23 @@ import json
 import argparse
 import glob
 import math
+from tqdm import tqdm
 
 def login(username: str, api_key: str) -> None:
-    login_url = f"{base_url}/profile.json?login={parser.parse_args().username}&api_key={parser.parse_args().api_key}"
-    response = requests.get(login_url)
+    print("Logging in...", end=" ")
+    params = {
+        'login': username,
+        'api_key': api_key
+    }
+    response = requests.get(f"{base_url}/users.json", params=params)
+    if response.status_code != 200:
+        print(f"failed (status code: {response.status_code}).")
+        print(response)
+        exit(1)
+    print("success!")
 
 def get_largest_id(tag: str) -> int:
-    files = glob.glob(f"images/{tag}/*/*_infos.json", recursive=True)
+    files = glob.glob(f"images/{tag}/*/*_*.*", recursive=True)
     ids = [int(os.path.basename(f).split("_")[0]) for f in files]
     if len(ids) > 0:
         id_max = max(ids)
@@ -19,70 +29,63 @@ def get_largest_id(tag: str) -> int:
     return id_max
 
 
-def download_image(tag: str, infos: dict) -> None:
-    
-    id = infos['id']
-    image_url = infos['file_url']
-    ext = infos['file_ext']
-    tags = infos['tag_string']
-    rating = infos['rating']
-    
-    if ext in ["mp4"]:
-        print("ignored (video)")
-        return
-    
-    # Save the image
+def download_image(tag: str, infos: dict, verbose: bool = True) -> None:
+    if verbose: print("Reading image informations...", end=" ")
     try:
-        image_response = requests.get(image_url)
-        image_response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print("failed")
+        id = infos['id']
+        image_url = infos['file_url']
+        extension = infos['file_ext']
+        tags = infos['tag_string']
+        rating = infos['rating']
+    except KeyError:
+        if verbose: print("ignored (wrong formatting).")
         return
-
+    if verbose: print(f"trying to download image with id '{id}'...", end=" ")
+    if extension in ["mp4"]:
+        if verbose: print("ignored (video).")
+        return
+    image_response = requests.get(image_url)
     image_data = image_response.content
-    
     path = f"images/{tag}/{rating}"
-    imagepath = f"{path}/{id}_image.{ext}"
+    imagepath = f"{path}/{id}_image.{extension}"
     tagspath = f"{path}/{id}_tags.txt"
     jsonpath = f"{path}/{id}_infos.json"
-    
     if not os.path.exists(path):
         os.makedirs(path)
-            
+    if os.path.exists(imagepath) and os.path.exists(tagspath) and os.path.exists(jsonpath):
+        if verbose: print("ignored (already exists).")
+        return
     with open(imagepath, "wb") as f:
         f.write(image_data)
-        
     with open(tagspath, "w") as f:
         f.write("\n".join(tags.split(" ")))
-        
     with open(jsonpath, "w") as f:
-        json.dump(image, f, indent=4)
-    
-    print("done")
+        json.dump(infos, f, indent=4)
+    if verbose: print("done!")
 
 
-def get_images_infos(tag: str, limit: int, id_max: int) -> list[dict]:
-    
+def get_images_infos(base_url: str, tag: str, limit: int, skip_ids_below: int = 0) -> list[dict]:
+    print("Requesting images infos...", end=" ")
     result = []
-    results_per_page_max = 200
-    page_limit = math.ceil(limit / results_per_page_max)
+    max_items_per_page = 200
+    page_limit = math.ceil(limit / max_items_per_page)
     for page in range(1, page_limit + 1):
-        results_per_page_current = results_per_page_max
+        max_items_for_current_page = max_items_per_page
         if page == page_limit:
-            results_per_page_current = limit - results_per_page_max * (page_limit - 1)
-        images_url = f"{base_url}/posts.json?tags={tag}+order:id+id:>{id_max}&limit={results_per_page_current}&page={page}"
-        try:
-            response = requests.get(images_url)
-            response.raise_for_status()
-            images_data = response.json()
-            if not images_data:
-                print("All images have been downloaded.")
-                return
-            result += images_data
-        except requests.exceptions.RequestException as e:
-            print(f"An error occured while trying to access {images_url}.")
+            max_items_for_current_page = limit - max_items_per_page * (page_limit - 1)
+        # TODO: improve the following line using for example requests.get(..., params=params)
+        # NOTE: requests.get() automatically encodes the parameters, which is not wanted since a lot of tags contain special characters
+        images_url = f"{base_url}/posts.json?tags={tag}+id:>{skip_ids_below}+order:id&limit={max_items_for_current_page}&page={page}"
+        response = requests.get(images_url)
+        if response.status_code != 200:
+            print(f"failed (status code: {response.status_code}).")
             continue
-    print("Done!")
+        items = response.json()
+        if len(items) == 0:
+            break
+        result += items
+    print(f"{len(result)} images found!")
+    return result
 
 if __name__ == "__main__":
     
@@ -90,11 +93,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Downloads images from danbooru')
     parser.add_argument('--username', type=str, help='username to login with', required=True)
-    parser.add_argument('--apikey', type=str, help='api key to login with', required=True)
+    parser.add_argument('--api_key', type=str, help='api key to login with', required=True)
     parser.add_argument('--tag', type=str, help='tag to search for', required=True)
     parser.add_argument('--limit', type=int, help='maximum number of images to download', required=True)
     parser.add_argument('--test', action='store_true', help='use testbooru instead of danbooru', required=False)
-
+    parser.add_argument('--ignore_existing', action='store_true', help='ignore existing images', required=False)
+    
     # Setting the base URL
 
     url_danbooru = "https://danbooru.donmai.us"
@@ -107,4 +111,19 @@ if __name__ == "__main__":
     
     tag = parser.parse_args().tag
     
-    get_image_infos
+    if not parser.parse_args().ignore_existing:
+        infos = get_images_infos(
+            tag=tag,
+            base_url=base_url,
+            limit=parser.parse_args().limit,
+            skip_ids_below=get_largest_id(tag)
+        )
+    else:
+        infos = get_images_infos(
+            tag=tag,
+            base_url=base_url,
+            limit=parser.parse_args().limit
+        )
+
+    for info in tqdm(infos):
+        download_image(tag, info, verbose=False)
