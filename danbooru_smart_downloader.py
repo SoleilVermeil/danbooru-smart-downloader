@@ -94,8 +94,8 @@ if __name__ == "__main__":
     parser.add_argument('--api_key', type=str, help='api key to login with', required=True)
     parser.add_argument('--tag', type=str, help='tag to search for', required=True)
     parser.add_argument('--limit', type=int, help='maximum number of images to download', required=True)
-    parser.add_argument('--test', action='store_true', help='use testbooru instead of danbooru', required=False)
     parser.add_argument('--ignore_existing', action='store_true', help='ignore existing images', required=False)
+    # parser.add_argument('--test', action='store_true', help='use testbooru instead of danbooru', required=False)
     
     # Setting the base URL
 
