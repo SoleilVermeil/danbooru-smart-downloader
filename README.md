@@ -13,7 +13,7 @@ The Danbooru Smart Downloader is a Python application that allows you to downloa
 
 All the images and corresponding informations are stored the following way:
 ```
-images
+images/
 |   <tag 1>
 |   |   <id 1>_image.<jpg/png>
 |   |   <id 1>_tags.txt
