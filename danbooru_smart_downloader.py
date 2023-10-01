@@ -5,6 +5,8 @@ import argparse
 import glob
 import math
 from tqdm import tqdm
+import dotenv
+import datetime
 
 def login(username: str, api_key: str) -> None:
     print("Logging in...", end=" ")
@@ -20,7 +22,7 @@ def login(username: str, api_key: str) -> None:
     print("success!")
 
 def get_largest_id(tag: str) -> int:
-    files = glob.glob(f"images/{tag}/*/*_*.*", recursive=True)
+    files = glob.glob(f"images/{tag}/*/*_infos.json", recursive=True)
     ids = [int(os.path.basename(f).split("_")[0]) for f in files]
     if len(ids) > 0:
         id_max = max(ids)
@@ -46,6 +48,10 @@ def download_image(tag: str, infos: dict, verbose: bool = True) -> None:
     image_response = requests.get(image_url)
     image_data = image_response.content
     path = f"images/{tag}/{rating}"
+    for chars in ["<", ">", ":", "\"", "\\", "|", "?", "*"]:
+        while chars in path:
+            path = path.replace(chars, "_")
+        tag = tag.replace(chars, "_")
     imagepath = f"{path}/{id}_image.{extension}"
     tagspath = f"{path}/{id}_tags.txt"
     jsonpath = f"{path}/{id}_infos.json"
@@ -62,10 +68,12 @@ def download_image(tag: str, infos: dict, verbose: bool = True) -> None:
         json.dump(infos, f, indent=4)
     if verbose: print("done!")
 
-def get_images_infos(base_url: str, tag: str, limit: int, skip_ids_below: int = 0) -> list[dict]:
+def get_images_infos(base_url: str, tag: str, limit: int = -1, skip_ids_below: int = -1) -> list[dict]:
     print("Requesting images infos...", end=" ")
     result = []
     max_items_per_page = 200
+    if limit == -1:
+        limit = int(10e10)
     page_limit = math.ceil(limit / max_items_per_page)
     for page in range(1, page_limit + 1):
         max_items_for_current_page = max_items_per_page
@@ -85,32 +93,52 @@ def get_images_infos(base_url: str, tag: str, limit: int, skip_ids_below: int = 
     print(f"{len(result)} images found!")
     return result
 
+def time() -> str:
+    return "[" + datetime.datetime.now().strftime("%H:%M:%S") + "]"
+
 if __name__ == "__main__":
     
     # Configuring the commands
 
     parser = argparse.ArgumentParser(description='Downloads images from danbooru')
-    parser.add_argument('--username', type=str, help='username to login with', required=True)
-    parser.add_argument('--api_key', type=str, help='api key to login with', required=True)
+    parser.add_argument('--use_dotenv', action='store_true', help='use .env file', required=False)
+    parser.add_argument('--username', type=str, help='username to login with', required=False)
+    parser.add_argument('--api_key', type=str, help='api key to login with', required=False)
     parser.add_argument('--tag', type=str, help='tag to search for', required=True)
     parser.add_argument('--limit', type=int, help='maximum number of images to download', required=True)
     parser.add_argument('--ignore_existing', action='store_true', help='ignore existing images', required=False)
-    # parser.add_argument('--test', action='store_true', help='use testbooru instead of danbooru', required=False)
+
+    if parser.parse_args().use_dotenv and (parser.parse_args().username is None and parser.parse_args().api_key is None):
+        dotenv.load_dotenv()
+        username = os.getenv("NAME")
+        api_key = os.getenv("API_KEY")
+    elif (parser.parse_args().username is not None and parser.parse_args().api_key is not None) and not parser.parse_args().use_dotenv:
+        username = parser.parse_args().username
+        api_key = parser.parse_args().api_key
+    else:
+        print("ERROR: either use --use_dotenv or both --username and --api_key")
+        exit(1)
     
     # Setting the base URL
 
-    url_danbooru = "https://danbooru.donmai.us"
-    url_testbooru = "https://testbooru.donmai.us"
-    base_url = url_danbooru if not parser.parse_args().test else url_testbooru
+    base_url = "https://danbooru.donmai.us"
     
     # Connecting to the API
     
-    login(parser.parse_args().username, parser.parse_args().api_key)
+    print(time())
+    login(username, api_key)
+    print(time())
+
+    # Flushing credentials
+
+    username = None
+    api_key = None
     
     # Requesting the images
 
     tag = parser.parse_args().tag
     
+    print(time())
     if not parser.parse_args().ignore_existing:
         infos = get_images_infos(
             tag=tag,
@@ -125,7 +153,10 @@ if __name__ == "__main__":
             limit=parser.parse_args().limit
         )
 
+    print(time())
     # Downloading the images
 
+    print(time())
     for info in tqdm(infos):
         download_image(tag, info, verbose=False)
+    print(time())
