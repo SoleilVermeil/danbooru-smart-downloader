@@ -10,6 +10,18 @@ import datetime
 from multiprocessing import Pool, cpu_count
 
 def login(username: str, api_key: str) -> None:
+    """
+    Logs in to the API using the given credentials.
+
+    Parameters
+    ----------
+    * username (str): the username to login with
+    * api_key (str): the api key to login with
+
+    Returns
+    -------
+    None
+    """
     print("Logging in...", end=" ")
     params = {
         'login': username,
@@ -23,6 +35,17 @@ def login(username: str, api_key: str) -> None:
     print("success!")
 
 def get_largest_id(tag: str) -> int:
+    """
+    Returns the largest ID of all downloaded images corresponding to the given tag.
+
+    Parameters
+    ----------
+    * tag (str): the tag to search for
+
+    Returns
+    -------
+    * (int): the largest ID of all downloaded images corresponding to the given tag
+    """
     files = glob.glob(f"images/{tag}/*/*_infos.json", recursive=True)
     ids = [int(os.path.basename(f).split("_")[0]) for f in files]
     if len(ids) > 0:
@@ -31,7 +54,32 @@ def get_largest_id(tag: str) -> int:
         id_max = 0
     return id_max
 
-def download_image(tag: str, info: dict, verbose: bool = True) -> None:
+def unpack(args):
+    """
+    Unpacks the arguments and calls the function with the unpacked arguments.
+
+    Parameters
+    ----------
+    * args (list): the arguments to unpack, where the first argument is the function to call
+    """
+    func = args[0]
+    args = args[1:]
+    return func(*args)
+
+def download_image(info: dict, tag: str, verbose: bool = True) -> None:
+    """
+    Downloads the image and saves all its tags as well as all the image informations in files.
+
+    Parameters
+    ----------
+    * info (dict): the image informations as a dictionary
+    * tag (str): the tag to search for
+    * verbose (bool): whether to print the progress or not
+
+    Returns
+    -------
+    None
+    """
     if verbose: print("Reading image informations...", end=" ")
     try:
         id = info['id']
@@ -70,6 +118,20 @@ def download_image(tag: str, info: dict, verbose: bool = True) -> None:
     if verbose: print("done!")
 
 def get_images_infos(base_url: str, tag: str, limit: int = -1, skip_ids_below: int = -1) -> list[dict]:
+    """
+    Makes a request to the API to get the informations of multiple images corresponding to the given tag. Images are sorted by ID, oldest first.
+
+    Parameters
+    ----------
+    * base_url (str): the base URL of the API
+    * tag (str): the tag to search for
+    * limit (int): the maximum number of images to request, -1 for no limit
+    * skip_ids_below (int): the minimum ID of the images to request, -1 for no minimum
+
+    Returns
+    -------
+    * (list[dict]): the informations of the images as a list of dictionaries
+    """
     print("Requesting images infos...", end=" ")
     result = []
     max_items_per_page = 200
@@ -154,14 +216,9 @@ if __name__ == "__main__":
 
     # Downloading the images
 
-    # TODO: update the progress bar
-    # NOTE: 'imap' does not seem to work since 'download_image' asks for positional arguments and 'imap' only supports tuple arguments
     timer = datetime.datetime.now()
-    processes = cpu_count()
-    with tqdm(total=len(infos)) as pbar:
-        def download_and_update(tag, info, verbose):
-            download_image(tag, info, verbose)
-            pbar.update()
-        with Pool(processes=processes) as pool:
-            pool.starmap(download_image, [(tag, info, False) for info in infos])
+    with Pool(processes=cpu_count()) as pool:
+        with tqdm(total=len(infos)) as pbar:
+            for _ in pool.imap_unordered(unpack, [(download_image, info, tag, False) for info in infos]):
+                pbar.update()
     # print(f"Elapsed time: {datetime.datetime.now() - timer}")
