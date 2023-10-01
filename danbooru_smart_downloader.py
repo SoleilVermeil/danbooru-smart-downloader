@@ -6,7 +6,8 @@ import glob
 import math
 from tqdm import tqdm
 import dotenv
-import multiprocessing
+import datetime
+from multiprocessing import Pool, cpu_count
 
 def login(username: str, api_key: str) -> None:
     print("Logging in...", end=" ")
@@ -30,14 +31,14 @@ def get_largest_id(tag: str) -> int:
         id_max = 0
     return id_max
 
-def download_image(tag: str, infos: dict, verbose: bool = True) -> None:
+def download_image(tag: str, info: dict, verbose: bool = True) -> None:
     if verbose: print("Reading image informations...", end=" ")
     try:
-        id = infos['id']
-        image_url = infos['file_url']
-        extension = infos['file_ext']
-        tags = infos['tag_string']
-        rating = infos['rating']
+        id = info['id']
+        image_url = info['file_url']
+        extension = info['file_ext']
+        tags = info['tag_string']
+        rating = info['rating']
     except KeyError:
         if verbose: print("ignored (wrong formatting).")
         return
@@ -65,7 +66,7 @@ def download_image(tag: str, infos: dict, verbose: bool = True) -> None:
     with open(tagspath, "w") as f:
         f.write("\n".join(tags.split(" ")))
     with open(jsonpath, "w") as f:
-        json.dump(infos, f, indent=4)
+        json.dump(info, f, indent=4)
     if verbose: print("done!")
 
 def get_images_infos(base_url: str, tag: str, limit: int = -1, skip_ids_below: int = -1) -> list[dict]:
@@ -122,7 +123,9 @@ if __name__ == "__main__":
     
     # Connecting to the API
     
+    timer = datetime.datetime.now()
     login(username, api_key)
+    # print(f"Elapsed time: {datetime.datetime.now() - timer}")
 
     # Flushing credentials
 
@@ -133,6 +136,7 @@ if __name__ == "__main__":
 
     tag = parser.parse_args().tag
     
+    timer = datetime.datetime.now()
     if not parser.parse_args().ignore_existing:
         infos = get_images_infos(
             tag=tag,
@@ -146,8 +150,18 @@ if __name__ == "__main__":
             base_url=base_url,
             limit=parser.parse_args().limit
         )
+    # print(f"Elapsed time: {datetime.datetime.now() - timer}")
 
     # Downloading the images
 
-    for info in tqdm(infos):
-        download_image(tag, info, verbose=False)
+    # TODO: update the progress bar
+    # NOTE: 'imap' does not seem to work since 'download_image' asks for positional arguments and 'imap' only supports tuple arguments
+    timer = datetime.datetime.now()
+    processes = cpu_count()
+    with tqdm(total=len(infos)) as pbar:
+        def download_and_update(tag, info, verbose):
+            download_image(tag, info, verbose)
+            pbar.update()
+        with Pool(processes=processes) as pool:
+            pool.starmap(download_image, [(tag, info, False) for info in infos])
+    # print(f"Elapsed time: {datetime.datetime.now() - timer}")
