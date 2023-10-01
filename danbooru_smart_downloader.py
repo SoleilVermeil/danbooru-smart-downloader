@@ -6,7 +6,7 @@ import glob
 import math
 from tqdm import tqdm
 import dotenv
-import datetime
+import multiprocessing
 
 def login(username: str, api_key: str) -> None:
     print("Logging in...", end=" ")
@@ -93,9 +93,6 @@ def get_images_infos(base_url: str, tag: str, limit: int = -1, skip_ids_below: i
     print(f"{len(result)} images found!")
     return result
 
-def time() -> str:
-    return "[" + datetime.datetime.now().strftime("%H:%M:%S") + "]"
-
 if __name__ == "__main__":
     
     # Configuring the commands
@@ -125,9 +122,7 @@ if __name__ == "__main__":
     
     # Connecting to the API
     
-    print(time())
     login(username, api_key)
-    print(time())
 
     # Flushing credentials
 
@@ -138,7 +133,6 @@ if __name__ == "__main__":
 
     tag = parser.parse_args().tag
     
-    print(time())
     if not parser.parse_args().ignore_existing:
         infos = get_images_infos(
             tag=tag,
@@ -153,10 +147,7 @@ if __name__ == "__main__":
             limit=parser.parse_args().limit
         )
 
-    print(time())
     # Downloading the images
 
-    print(time())
     for info in tqdm(infos):
         download_image(tag, info, verbose=False)
-    print(time())
