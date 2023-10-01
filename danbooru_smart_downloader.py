@@ -34,26 +34,6 @@ def login(username: str, api_key: str) -> None:
         exit(1)
     print("success!")
 
-def get_largest_id(tag: str) -> int:
-    """
-    Returns the largest ID of all downloaded images corresponding to the given tag.
-
-    Parameters
-    ----------
-    * tag (str): the tag to search for
-
-    Returns
-    -------
-    * (int): the largest ID of all downloaded images corresponding to the given tag
-    """
-    files = glob.glob(f"images/{tag}/*/*_infos.json", recursive=True)
-    ids = [int(os.path.basename(f).split("_")[0]) for f in files]
-    if len(ids) > 0:
-        id_max = max(ids)
-    else:
-        id_max = 0
-    return id_max
-
 def unpack(args):
     """
     Unpacks the arguments and calls the function with the unpacked arguments.
@@ -90,25 +70,25 @@ def download_image(info: dict, tag: str, verbose: bool = True) -> None:
     except KeyError:
         if verbose: print("ignored (wrong formatting).")
         return
+    path = f"images/{tag}/{rating}"
+    imagepath = f"{path}/{id}_image.{extension}"
+    tagspath = f"{path}/{id}_tags.txt"
+    jsonpath = f"{path}/{id}_infos.json"
+    if os.path.exists(imagepath) and os.path.exists(tagspath) and os.path.exists(jsonpath):
+        if verbose: print("ignored (already exists).")
+        return
     if verbose: print(f"trying to download image with id '{id}'...", end=" ")
     if extension in ["mp4"]:
         if verbose: print("ignored (video).")
         return
     image_response = requests.get(image_url)
     image_data = image_response.content
-    path = f"images/{tag}/{rating}"
     for chars in ["<", ">", ":", "\"", "\\", "|", "?", "*"]:
         while chars in path:
             path = path.replace(chars, "_")
         tag = tag.replace(chars, "_")
-    imagepath = f"{path}/{id}_image.{extension}"
-    tagspath = f"{path}/{id}_tags.txt"
-    jsonpath = f"{path}/{id}_infos.json"
     if not os.path.exists(path):
         os.makedirs(path)
-    if os.path.exists(imagepath) and os.path.exists(tagspath) and os.path.exists(jsonpath):
-        if verbose: print("ignored (already exists).")
-        return
     with open(imagepath, "wb") as f:
         f.write(image_data)
     with open(tagspath, "w") as f:
@@ -117,7 +97,7 @@ def download_image(info: dict, tag: str, verbose: bool = True) -> None:
         json.dump(info, f, indent=4)
     if verbose: print("done!")
 
-def get_images_infos(base_url: str, tag: str, limit: int = -1, skip_ids_below: int = -1) -> list[dict]:
+def get_images_infos(base_url: str, tag: str, limit: int | None = None, rating: str | None = None) -> list[dict]:
     """
     Makes a request to the API to get the informations of multiple images corresponding to the given tag. Images are sorted by ID, oldest first.
 
@@ -125,8 +105,8 @@ def get_images_infos(base_url: str, tag: str, limit: int = -1, skip_ids_below: i
     ----------
     * base_url (str): the base URL of the API
     * tag (str): the tag to search for
-    * limit (int): the maximum number of images to request, -1 for no limit
-    * skip_ids_below (int): the minimum ID of the images to request, -1 for no minimum
+    * limit (int | None): the maximum number of images to download if specified
+    * rating (str | None): the rating of the images to download if specified
 
     Returns
     -------
@@ -135,7 +115,7 @@ def get_images_infos(base_url: str, tag: str, limit: int = -1, skip_ids_below: i
     print("Requesting images infos...", end=" ")
     result = []
     max_items_per_page = 200
-    if limit == -1:
+    if limit is None:
         limit = int(10e10)
     page_limit = math.ceil(limit / max_items_per_page)
     for page in range(1, page_limit + 1):
@@ -144,8 +124,15 @@ def get_images_infos(base_url: str, tag: str, limit: int = -1, skip_ids_below: i
             max_items_for_current_page = limit - max_items_per_page * (page_limit - 1)
         # TODO: improve the following line using for example requests.get(..., params=params)
         # NOTE: requests.get() automatically encodes the parameters, which is not wanted since a lot of tags contain special characters
-        images_url = f"{base_url}/posts.json?tags={tag}+id:>{skip_ids_below}+order:id&limit={max_items_for_current_page}&page={page}"
+        images_url = f"{base_url}/posts.json?"
+        images_url += f"tags={tag}+order:id"
+        if rating is not None:
+            images_url += f"+rating:{rating}"
+        images_url += "&"
+        images_url += f"limit={max_items_for_current_page}&"
+        images_url += f"page={page}&"
         response = requests.get(images_url)
+        print(f"page '{images_url}'...", end=" ")
         if response.status_code != 200:
             print(f"failed (status code: {response.status_code}).")
             continue
@@ -165,8 +152,10 @@ if __name__ == "__main__":
     parser.add_argument('--username', type=str, help='username to login with', required=False)
     parser.add_argument('--api_key', type=str, help='api key to login with', required=False)
     parser.add_argument('--tag', type=str, help='tag to search for', required=True)
-    parser.add_argument('--limit', type=int, help='maximum number of images to download', required=True)
-    parser.add_argument('--ignore_existing', action='store_true', help='ignore existing images', required=False)
+    parser.add_argument('--limit', type=int, help='maximum number of images to download if specified', required=False)
+    parser.add_argument('--rating', choices=['g', 'q', 's', 'e'], help='rating of the images to download if specified', required=False)
+
+    # Loading the credentials
 
     if parser.parse_args().use_dotenv and (parser.parse_args().username is None and parser.parse_args().api_key is None):
         dotenv.load_dotenv()
@@ -197,21 +186,15 @@ if __name__ == "__main__":
     # Requesting the images
 
     tag = parser.parse_args().tag
-    
+
     timer = datetime.datetime.now()
-    if not parser.parse_args().ignore_existing:
-        infos = get_images_infos(
-            tag=tag,
-            base_url=base_url,
-            limit=parser.parse_args().limit,
-            skip_ids_below=get_largest_id(tag)
-        )
-    else:
-        infos = get_images_infos(
-            tag=tag,
-            base_url=base_url,
-            limit=parser.parse_args().limit
-        )
+    kwargs = {"tag": tag, "base_url": base_url}
+    if parser.parse_args().rating is not None:
+        kwargs["rating"] = parser.parse_args().rating
+    if parser.parse_args().limit is not None:
+        kwargs["limit"] = parser.parse_args().limit
+    
+    infos = get_images_infos(**kwargs)
     # print(f"Elapsed time: {datetime.datetime.now() - timer}")
 
     # Downloading the images
