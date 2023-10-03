@@ -2,7 +2,6 @@ import os
 import requests
 import json
 import argparse
-import glob
 import math
 from tqdm import tqdm
 import dotenv
