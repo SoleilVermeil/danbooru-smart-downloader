@@ -8,6 +8,26 @@ import dotenv
 import datetime
 from multiprocessing import Pool, cpu_count
 
+STATUS_CODE = {
+    200: "OK",
+    204: "No Content",
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    410: "Gone",
+    420: "Invalid Record",
+    422: "Locked",
+    423: "Already Exists",
+    424: "Invalid Parameters",
+    429: "User Throttled",
+    500: "Internal Server Error",
+    502: "Bad Gateway",
+    503: "Service Unavailable"
+}
+
+MAX_ITEMS_PER_PAGE = 200
+
 def login(username: str, api_key: str) -> None:
     """
     Logs in to the API using the given credentials.
@@ -28,7 +48,7 @@ def login(username: str, api_key: str) -> None:
     }
     response = requests.get(f"{base_url}/users.json", params=params)
     if response.status_code != 200:
-        print(f"failed (status code: {response.status_code}).")
+        print(f"failed (status code: {response.status_code}: {STATUS_CODE[response.status_code]}).")
         print(response)
         exit(1)
     print("success!")
@@ -45,7 +65,7 @@ def unpack(args):
     args = args[1:]
     return func(*args)
 
-def download_image(info: dict, tag: str, verbose: bool = True) -> None:
+def download_image(info: dict, tag: str, only_infos: bool = False, verbose: bool = True) -> None:
     """
     Downloads the image and saves all its tags as well as all the image informations in files.
 
@@ -70,6 +90,14 @@ def download_image(info: dict, tag: str, verbose: bool = True) -> None:
         if verbose: print("ignored (wrong formatting).")
         return
     path = f"images/{tag}/{rating}"
+    for chars in ["<", ">", ":", "\"", "\\", "|", "?", "*"]:
+        while chars in path:
+            path = path.replace(chars, "_")
+    if not os.path.exists(path):
+        try:
+            os.makedirs(path)
+        except FileExistsError: # necessary since multiprocessing could lead to multiple processes trying to create the same directory at the same time
+            pass
     imagepath = f"{path}/{id}_image.{extension}"
     tagspath = f"{path}/{id}_tags.txt"
     jsonpath = f"{path}/{id}_infos.json"
@@ -77,24 +105,24 @@ def download_image(info: dict, tag: str, verbose: bool = True) -> None:
         if verbose: print("ignored (already exists).")
         return
     if verbose: print(f"trying to download image with id '{id}'...", end=" ")
-    if extension in ["mp4"]:
+    if extension in ["mp4", "zip"]:
         if verbose: print("ignored (video).")
         return
-    image_response = requests.get(image_url)
-    image_data = image_response.content
-    for chars in ["<", ">", ":", "\"", "\\", "|", "?", "*"]:
-        while chars in path:
-            path = path.replace(chars, "_")
-        tag = tag.replace(chars, "_")
-    if not os.path.exists(path):
-        os.makedirs(path)
-    with open(imagepath, "wb") as f:
-        f.write(image_data)
+    if not only_infos:
+        image_response = requests.get(image_url)
+        image_data = image_response.content
+        with open(imagepath, "wb") as f:
+            f.write(image_data)
     with open(tagspath, "w") as f:
         f.write("\n".join(tags.split(" ")))
     with open(jsonpath, "w") as f:
         json.dump(info, f, indent=4)
     if verbose: print("done!")
+
+def get_images_count(base_url: str, tag: str) -> int:
+    count_url = f"{base_url}/tags.json?search[name]={tag}"
+    response = requests.get(count_url)
+    return response.json()[0]['post_count']
 
 def get_images_infos(base_url: str, tag: str, limit: int | None = None, rating: str | None = None) -> list[dict]:
     """
@@ -113,32 +141,32 @@ def get_images_infos(base_url: str, tag: str, limit: int | None = None, rating: 
     """
     print("Requesting images infos...", end=" ")
     result = []
-    max_items_per_page = 200
     if limit is None:
-        limit = int(10e10)
-    page_limit = math.ceil(limit / max_items_per_page)
-    for page in range(1, page_limit + 1):
-        max_items_for_current_page = max_items_per_page
-        if page == page_limit:
-            max_items_for_current_page = limit - max_items_per_page * (page_limit - 1)
-        # TODO: improve the following line using for example requests.get(..., params=params)
-        # NOTE: requests.get() automatically encodes the parameters, which is not wanted since a lot of tags contain special characters
-        images_url = f"{base_url}/posts.json?"
-        images_url += f"tags={tag}+order:id"
-        if rating is not None:
-            images_url += f"+rating:{rating}"
-        images_url += "&"
-        images_url += f"limit={max_items_for_current_page}&"
-        images_url += f"page={page}&"
-        response = requests.get(images_url)
-        print(f"page '{images_url}'...", end=" ")
-        if response.status_code != 200:
-            print(f"failed (status code: {response.status_code}).")
-            continue
-        items = response.json()
-        if len(items) == 0:
-            break
-        result += items
+        limit = get_images_count(base_url, tag)
+    page_limit = math.ceil(limit / MAX_ITEMS_PER_PAGE)
+    with tqdm(total=limit) as pbar:
+        for page in range(1, page_limit + 1):
+            max_items_for_current_page = MAX_ITEMS_PER_PAGE
+            if page == page_limit:
+                max_items_for_current_page = limit - MAX_ITEMS_PER_PAGE * (page_limit - 1)
+            # TODO: improve the following line using for example requests.get(..., params=params)
+            # NOTE: requests.get() automatically encodes the parameters, which is not wanted since a lot of tags contain special characters
+            images_url = f"{base_url}/posts.json?"
+            images_url += f"tags={tag}+order:id"
+            if rating is not None:
+                images_url += f"+rating:{rating}"
+            images_url += "&"
+            images_url += f"limit={max_items_for_current_page}&"
+            images_url += f"page={page}&"
+            response = requests.get(images_url)
+            if response.status_code != 200:
+                print(f"failed (status code: {response.status_code}: {STATUS_CODE[response.status_code]}).")
+                continue
+            items = response.json()
+            if len(items) == 0:
+                break
+            result += items
+            pbar.update(len(items))
     print(f"{len(result)} images found!")
     return result
 
@@ -153,9 +181,12 @@ if __name__ == "__main__":
     parser.add_argument('--tag', type=str, help='tag to search for', required=True)
     parser.add_argument('--limit', type=int, help='maximum number of images to download if specified', required=False)
     parser.add_argument('--rating', choices=['g', 'q', 's', 'e'], help='rating of the images to download if specified', required=False)
+    parser.add_argument('--only_infos', action='store_true', help='only download the infos of the images', required=False)
 
     # Loading the credentials
 
+    username = ""
+    api_key = ""
     if parser.parse_args().use_dotenv and (parser.parse_args().username is None and parser.parse_args().api_key is None):
         dotenv.load_dotenv()
         username = os.getenv("NAME")
@@ -201,6 +232,6 @@ if __name__ == "__main__":
     timer = datetime.datetime.now()
     with Pool(processes=cpu_count()) as pool:
         with tqdm(total=len(infos)) as pbar:
-            for _ in pool.imap_unordered(unpack, [(download_image, info, tag, False) for info in infos]):
+            for _ in pool.imap_unordered(unpack, [(download_image, info, tag, parser.parse_args().only_infos, False) for info in infos]):
                 pbar.update()
     # print(f"Elapsed time: {datetime.datetime.now() - timer}")
