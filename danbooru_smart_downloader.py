@@ -7,6 +7,7 @@ from tqdm import tqdm
 import dotenv
 import datetime
 from multiprocessing import Pool, cpu_count
+import logging
 
 STATUS_CODE = {
     200: "OK",
@@ -41,17 +42,16 @@ def login(username: str, api_key: str) -> None:
     -------
     None
     """
-    print("Logging in...", end=" ")
+    logging.info("Logging in...")
     params = {
         'login': username,
         'api_key': api_key
     }
     response = requests.get(f"{base_url}/users.json", params=params)
     if response.status_code != 200:
-        print(f"failed (status code: {response.status_code}: {STATUS_CODE[response.status_code]}).")
-        print(response)
+        logging.info(f"failed (status code: {response.status_code}: {STATUS_CODE[response.status_code]}).")
         exit(1)
-    print("success!")
+    logging.info("success!")
 
 def unpack(args):
     """
@@ -65,7 +65,7 @@ def unpack(args):
     args = args[1:]
     return func(*args)
 
-def download_image(info: dict, tag: str, only_infos: bool = False, verbose: bool = True) -> None:
+def download_image(info: dict, tag: str, only_infos: bool = False) -> None:
     """
     Downloads the image and saves all its tags as well as all the image informations in files.
 
@@ -79,7 +79,7 @@ def download_image(info: dict, tag: str, only_infos: bool = False, verbose: bool
     -------
     None
     """
-    if verbose: print("Reading image informations...", end=" ")
+    logging.debug("Reading image informations...")
     try:
         id = info['id']
         image_url = info['file_url']
@@ -87,7 +87,7 @@ def download_image(info: dict, tag: str, only_infos: bool = False, verbose: bool
         tags = info['tag_string']
         rating = info['rating']
     except KeyError:
-        if verbose: print("ignored (wrong formatting).")
+        logging.debug("ignored (wrong formatting).")
         return
     path = f"images/{tag}/{rating}"
     for chars in ["<", ">", ":", "\"", "\\", "|", "?", "*"]:
@@ -102,11 +102,11 @@ def download_image(info: dict, tag: str, only_infos: bool = False, verbose: bool
     tagspath = f"{path}/{id}_tags.txt"
     jsonpath = f"{path}/{id}_infos.json"
     if os.path.exists(imagepath) and os.path.exists(tagspath) and os.path.exists(jsonpath):
-        if verbose: print("ignored (already exists).")
+        logging.debug("ignored (already exists).")
         return
-    if verbose: print(f"trying to download image with id '{id}'...", end=" ")
+    logging.debug(f"trying to download image with id '{id}'...")
     if extension in ["mp4", "zip"]:
-        if verbose: print("ignored (video).")
+        logging.debug(f"ignored (extension: {extension}).")
         return
     if not only_infos:
         image_response = requests.get(image_url)
@@ -117,7 +117,7 @@ def download_image(info: dict, tag: str, only_infos: bool = False, verbose: bool
         f.write("\n".join(tags.split(" ")))
     with open(jsonpath, "w") as f:
         json.dump(info, f, indent=4)
-    if verbose: print("done!")
+    logging.debug("done!")
 
 def get_images_count(base_url: str, tag: str) -> int:
     count_url = f"{base_url}/tags.json?search[name]={tag}"
@@ -139,7 +139,7 @@ def get_images_infos(base_url: str, tag: str, limit: int | None = None, rating: 
     -------
     * (list[dict]): the informations of the images as a list of dictionaries
     """
-    print("Requesting images infos...", end=" ")
+    logging.info("Requesting images infos...")
     result = []
     if limit is None:
         limit = get_images_count(base_url, tag)
@@ -152,7 +152,7 @@ def get_images_infos(base_url: str, tag: str, limit: int | None = None, rating: 
             # TODO: improve the following line using for example requests.get(..., params=params)
             # NOTE: requests.get() automatically encodes the parameters, which is not wanted since a lot of tags contain special characters
             images_url = f"{base_url}/posts.json?"
-            images_url += f"tags={tag}+order:id"
+            images_url += f"tags={tag}" # "+order:id" # TODO: enable this again
             if rating is not None:
                 images_url += f"+rating:{rating}"
             images_url += "&"
@@ -160,17 +160,20 @@ def get_images_infos(base_url: str, tag: str, limit: int | None = None, rating: 
             images_url += f"page={page}&"
             response = requests.get(images_url)
             if response.status_code != 200:
-                print(f"failed (status code: {response.status_code}: {STATUS_CODE[response.status_code]}).")
                 continue
             items = response.json()
             if len(items) == 0:
                 break
             result += items
             pbar.update(len(items))
-    print(f"{len(result)} images found!")
     return result
 
 if __name__ == "__main__":
+
+    # Setting up the logger
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.Formatter.converter = lambda *args: datetime.datetime.now().timetuple()
     
     # Configuring the commands
 
@@ -232,6 +235,6 @@ if __name__ == "__main__":
     timer = datetime.datetime.now()
     with Pool(processes=cpu_count()) as pool:
         with tqdm(total=len(infos)) as pbar:
-            for _ in pool.imap_unordered(unpack, [(download_image, info, tag, parser.parse_args().only_infos, False) for info in infos]):
+            for _ in pool.imap_unordered(unpack, [(download_image, info, tag, parser.parse_args().only_infos) for info in infos]):
                 pbar.update()
     # print(f"Elapsed time: {datetime.datetime.now() - timer}")
