@@ -153,5 +153,5 @@ cython_debug/
 
 .DS_Store
 images/*/
-*.ipynb
-test/
+desktop.ini
+_*
