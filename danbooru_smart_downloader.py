@@ -8,6 +8,7 @@ import dotenv
 import datetime
 from multiprocessing import Pool, cpu_count
 import logging
+import glob
 
 STATUS_CODE = {
     200: "OK",
@@ -73,7 +74,7 @@ def download_image(info: dict, tag: str, only_infos: bool = False) -> None:
     ----------
     * info (dict): the image informations as a dictionary
     * tag (str): the tag to search for
-    * verbose (bool): whether to print the progress or not
+    * only_infos (bool): whether to only download the infos of the images
 
     Returns
     -------
@@ -124,6 +125,14 @@ def get_images_count(base_url: str, tag: str) -> int:
     response = requests.get(count_url)
     return response.json()[0]['post_count']
 
+def get_downloaded_ids(tag: str, rating: str | None = None) -> list[int]:
+    path = f"images/{tag}"
+    if rating is not None:
+        path += f"/{rating}"
+    files = glob.glob(f"{path}/*/*_infos.json", recursive=True)
+    ids = [int(os.path.basename(file).split("_")[0]) for file in files]
+    return ids
+
 def get_images_infos(base_url: str, tag: str, limit: int | None = None, rating: str | None = None) -> list[dict]:
     """
     Makes a request to the API to get the informations of multiple images corresponding to the given tag. Images are sorted by ID, oldest first.
@@ -139,12 +148,16 @@ def get_images_infos(base_url: str, tag: str, limit: int | None = None, rating: 
     -------
     * (list[dict]): the informations of the images as a list of dictionaries
     """
-    logging.info("Requesting images infos...")
+    logging.info(f"Requesting images infos for tag '{tag}'.")
     result = []
+    downloaded_ids = get_downloaded_ids(tag, rating)
     if limit is None:
-        limit = get_images_count(base_url, tag)
+        images_count = get_images_count(base_url, tag)
+        limit = images_count - len(downloaded_ids)
+        logging.info(f"{images_count} images found corresponding to this tag.")
+        logging.info(f"{len(downloaded_ids)} images already downloaded.")
     page_limit = math.ceil(limit / MAX_ITEMS_PER_PAGE)
-    with tqdm(total=limit) as pbar:
+    with tqdm(total=limit, desc="Getting images informations") as pbar:
         for page in range(1, page_limit + 1):
             max_items_for_current_page = MAX_ITEMS_PER_PAGE
             if page == page_limit:
@@ -152,7 +165,11 @@ def get_images_infos(base_url: str, tag: str, limit: int | None = None, rating: 
             # TODO: improve the following line using for example requests.get(..., params=params)
             # NOTE: requests.get() automatically encodes the parameters, which is not wanted since a lot of tags contain special characters
             images_url = f"{base_url}/posts.json?"
-            images_url += f"tags={tag}" # "+order:id" # TODO: enable this again
+            images_url += f"tags={tag}"
+            if limit < 10_000:
+                images_url += "+order:id" # for too large limits, ordering by id may lead to timeouts
+                if len(downloaded_ids) != 0:
+                    images_url += f"+id:>={max(downloaded_ids)}"
             if rating is not None:
                 images_url += f"+rating:{rating}"
             images_url += "&"
@@ -172,8 +189,7 @@ if __name__ == "__main__":
 
     # Setting up the logger
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    logging.Formatter.converter = lambda *args: datetime.datetime.now().timetuple()
+    logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)8s] --- %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     
     # Configuring the commands
 
@@ -185,6 +201,7 @@ if __name__ == "__main__":
     parser.add_argument('--limit', type=int, help='maximum number of images to download if specified', required=False)
     parser.add_argument('--rating', choices=['g', 'q', 's', 'e'], help='rating of the images to download if specified', required=False)
     parser.add_argument('--only_infos', action='store_true', help='only download the infos of the images', required=False)
+    parser.add_argument('--smart_download', action='store_true', help='use smart download', required=False)
 
     # Loading the credentials
 
@@ -218,23 +235,27 @@ if __name__ == "__main__":
     
     # Requesting the images
 
-    tag = parser.parse_args().tag
+    tags = parser.parse_args().tag
 
-    timer = datetime.datetime.now()
-    kwargs = {"tag": tag, "base_url": base_url}
-    if parser.parse_args().rating is not None:
-        kwargs["rating"] = parser.parse_args().rating
-    if parser.parse_args().limit is not None:
-        kwargs["limit"] = parser.parse_args().limit
-    
-    infos = get_images_infos(**kwargs)
-    # print(f"Elapsed time: {datetime.datetime.now() - timer}")
+    for tag in tags.split(","):
+        
+        tag = tag.strip()
 
-    # Downloading the images
+        timer = datetime.datetime.now()
+        kwargs = {"tag": tag, "base_url": base_url}
+        if parser.parse_args().rating is not None:
+            kwargs["rating"] = parser.parse_args().rating
+        if parser.parse_args().limit is not None:
+            kwargs["limit"] = parser.parse_args().limit
+        
+        infos = get_images_infos(**kwargs)
+        # print(f"Elapsed time: {datetime.datetime.now() - timer}")
 
-    timer = datetime.datetime.now()
-    with Pool(processes=cpu_count()) as pool:
-        with tqdm(total=len(infos)) as pbar:
-            for _ in pool.imap_unordered(unpack, [(download_image, info, tag, parser.parse_args().only_infos) for info in infos]):
-                pbar.update()
-    # print(f"Elapsed time: {datetime.datetime.now() - timer}")
+        # Downloading the images
+
+        timer = datetime.datetime.now()
+        with Pool(processes=cpu_count()) as pool:
+            with tqdm(total=len(infos), desc="Downloading images") as pbar:
+                for _ in pool.imap_unordered(unpack, [(download_image, info, tag, parser.parse_args().only_infos) for info in infos]):
+                    pbar.update()
+        # print(f"Elapsed time: {datetime.datetime.now() - timer}")
