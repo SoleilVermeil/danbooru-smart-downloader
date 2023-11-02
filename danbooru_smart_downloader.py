@@ -254,6 +254,7 @@ if __name__ == "__main__":
         # Downloading the images
 
         timer = datetime.datetime.now()
+        logging.info(f"Parallelizing the downloads using {cpu_count()} processes.")
         with Pool(processes=cpu_count()) as pool:
             with tqdm(total=len(infos), desc="Downloading images") as pbar:
                 for _ in pool.imap_unordered(unpack, [(download_image, info, tag, parser.parse_args().only_infos) for info in infos]):
